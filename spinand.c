@@ -168,7 +168,7 @@ static int spi_nand_inpage_read(struct flashctx *flash, unsigned int row_addr, u
 		len -= data_to_read;
 		column_addr += data_to_read;
 		bytes += data_to_read;
-		printf("page %d\n",len);
+		//printf("page %d\n",len);
 	}
 
 	return 0;
@@ -188,19 +188,54 @@ int spi_nand_read_chunked(struct flashctx *flash, uint8_t *buf, unsigned int sta
 	int ret;
 
 	/* Calculate acture column address len */
-	unsigned int column_addr_len = ilog2(flash->chip->page_size);
+	unsigned int column_addr_len = ilog2(flash->chip->page_size)+1;
 	unsigned int column_addr_mask = ~(-1 << column_addr_len);
-	printf("%d %d %d\n",flash->chip->page_size,column_addr_len,column_addr_mask);
+	printf("%d %d 0x%x\n",flash->chip->page_size,column_addr_len,column_addr_mask);
 
-	while (len) {
+  uint8_t *a,*b;
+  int times = 0;
+	while (len){ 
 		unsigned int data_to_read = min(chunksize, len);
-		ret = spi_nand_inpage_read(flash, start >> column_addr_len, start & column_addr_mask, buf, len, data_to_read);
+    unsigned int row_addr = start >> column_addr_len;
+    unsigned int col_addr = start &  column_addr_mask;
+    // read for multi times to make sure everything is okay
+    times = 0;
+
+    a = malloc(data_to_read);
+    b = malloc(data_to_read);
+    while (1) {
+      int blk = row_addr >> 6;
+      int pg = row_addr & 0x3f;
+      if (times != 0 || (pg == 0 && (blk%16) == 0))
+        printf("Reading block %d, page %d group %d\n", row_addr>>6, row_addr&0x3f, times);
+	    ret = spi_nand_inpage_read(flash, row_addr, col_addr, a, data_to_read, chunksize);
+      if (ret){
+        printf("Err a %d", ret);
+        return ret;
+      }
+	    ret = spi_nand_inpage_read(flash, row_addr, col_addr, b, data_to_read, chunksize);
+      if (ret){
+        printf("Err b %d", ret);
+        return ret;
+      }
+      if (memcmp(a,b,data_to_read)){
+        printf("Mismatch. Re-reading.");
+        times++;
+        continue;
+      } else {
+        memcpy(buf, a, data_to_read);
+        break;
+      }
+    }
+    free(a);
+    free(b);
+
 		if (ret)
 			return ret;
 		len -= data_to_read;
 		start += data_to_read;
 		buf += data_to_read;
-		printf("chunked %d\n",len);
+    //printf("chunked %d\n",len);
 	}
 
 	return 0;
@@ -238,11 +273,16 @@ static void probe_spi_nand_toshiba(struct flashctx *flash, const uint8_t *parame
 	flash->chip->name = strncpy_tospace(name, (const char *)(parameters + 44), sizeof(name));
 	flash->chip->page_size = *(uint32_t *)(parameters + 80);
 	flash->chip->data_per_spare = flash->chip->page_size / *(uint16_t *)(parameters + 84);
+  
+  unsigned int spare_size = *(uint16_t *)(parameters + 84 );
+  // try also read spare
+  flash->chip->page_size += spare_size;
+
 	flash->chip->partial_page_size = *(uint32_t *)(parameters + 86);
 	flash->chip->block_size = flash->chip->page_size * *(uint32_t *)(parameters + 92);
 	flash->chip->unit_size = flash->chip->block_size * *(uint32_t *)(parameters + 96);
 	flash->chip->total_size = flash->chip->unit_size * parameters[100] / 1024;
-	flash->chip->total_size = 64;
+	//flash->chip->total_size = 64;
 }
 
 #define HAS_MAGIC(data, magic) (strncmp((const char *)magic, (const char *)data, sizeof(magic)) == 0)

@@ -102,7 +102,16 @@ int default_spi_write_256(struct flashctx *flash, const uint8_t *buf, unsigned i
 int spi_chip_read(struct flashctx *flash, uint8_t *buf, unsigned int start,
 		  unsigned int len)
 {
-	return flash->mst->spi.read(flash, buf, start, len);
+	unsigned int max_data = flash->mst->spi.max_data_read;
+	if (max_data == MAX_DATA_UNSPECIFIED) {
+    msg_pwarn("max_data not defined. set to 2112\n");
+    flash->mst->spi.max_data_read=2112;
+    max_data=2112;
+	}
+	if (flash->chip->spi_cmd_set == SPI_NAND)
+		return spi_nand_read_chunked(flash, buf, start, len, max_data);
+	else
+	  return flash->mst->spi.read(flash, buf, start, len);
 }
 
 /*
